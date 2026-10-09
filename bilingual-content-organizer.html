@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>双语内容整理</title>
+<style>
+  body {
+    font-family: sans-serif;
+    margin: 20px;
+    max-width: 1200px;
+  }
+  h1 { font-size: 22px; }
+  textarea {
+    width: 100%;
+    height: 320px;
+    font-family: Consolas, monospace;
+    font-size: 14px;
+    line-height: 1.5;
+    padding: 10px;
+    box-sizing: border-box;
+  }
+  button {
+    padding: 10px 20px;
+    font-size: 16px;
+    margin: 10px 10px 10px 0;
+    cursor: pointer;
+  }
+  #preview {
+    margin-top: 20px;
+    border: 1px dashed #aaa;
+    padding: 10px;
+    background: #fafafa;
+  }
+  table { border-collapse: collapse; width: 100%; margin-bottom: 10px; }
+  td { border: 1px solid #000; padding: 6px; vertical-align: top; }
+  .title-cell { background-color: #FFF2CC; font-weight: bold; text-align: center; }
+  .en { font-family: 'Times New Roman', SimSun, serif; font-size: 12pt; line-height: 1.5; }
+  .zh { font-family: SimSun, '宋体', serif; font-size: 12pt; line-height: 1.5; }
+</style>
+</head>
+<body>
+
+<h1>双语内容整理</h1>
+
+<p>
+粘贴规则：每个内容块先放外文标题和外文段落，再放中文标题和中文段落；<strong>同一个内容块内部不要写空行</strong>，不同内容块之间用空行隔开。只有中文的内容块会自动放在右侧，左侧留空。
+</p>
+
+<textarea id="input" placeholder="示例：&#10;The Quiet Power of Small Habits&#10;Most people believe...&#10;A habit is a choice...&#10;小习惯的静默力量&#10;大多数人认为...&#10;习惯是一种...&#10;&#10;The Habit of Reading&#10;Reading is one...&#10;阅读的习惯&#10;阅读是一个人...&#10;&#10;中文短文示例&#10;这是一段只有中文的内容，会放在右侧，左侧留空。"></textarea>
+
+<div>
+  <button onclick="preview()">预览</button>
+  <button onclick="generateWord()">生成并下载 Word 文档</button>
+</div>
+
+<div id="preview"></div>
+
+<script>
+function isChineseLine(line) {
+  if (!line) return false;
+  const zhCount = (line.match(/[\u4e00-\u9fa5]/g) || []).length;
+  const jaKana = (line.match(/[\u3040-\u30ff]/g) || []).length;
+  const koHangul = (line.match(/[\uac00-\ud7af]/g) || []).length;
+  const ruCyrillic = (line.match(/[\u0400-\u04ff]/g) || []).length;
+  const arArabic = (line.match(/[\u0600-\u06ff]/g) || []).length;
+  const enLatin = (line.match(/[A-Za-z]/g) || []).length;
+  if (jaKana > 0 || koHangul > 0 || ruCyrillic > 0 || arArabic > 0) return false;
+  return zhCount > enLatin;
+}
+
+// 解析：先按空行分块，再在每个块内按语言分组
+function parseInput(text) {
+  const rawLines = text.split('\n').map(line => line.trim());
+
+  // 第一步：按空行切分成原始内容块
+  const rawBlocks = [];
+  let cur = [];
+  for (const line of rawLines) {
+    if (line === '') {
+      if (cur.length > 0) { rawBlocks.push(cur); cur = []; }
+    } else {
+      cur.push(line);
+    }
+  }
+  if (cur.length > 0) rawBlocks.push(cur);
+
+  // 第二步：在每个原始内容块内按语言切分
+  const blocks = [];
+  for (const rb of rawBlocks) {
+    let currentLang = null;
+    let currentLines = [];
+    for (const line of rb) {
+      const lang = isChineseLine(line) ? 'zh' : 'other';
+      if (lang !== currentLang) {
+        if (currentLines.length > 0) {
+          blocks.push({ lang: currentLang, lines: currentLines });
+        }
+        currentLang = lang;
+        currentLines = [line];
+      } else {
+        currentLines.push(line);
+      }
+    }
+    if (currentLines.length > 0) {
+      blocks.push({ lang: currentLang, lines: currentLines });
+    }
+  }
+
+  // 第三步：按顺序配对
+  function makeItem(otherLines, zhLines) {
+    const titleOther = otherLines[0] || '';
+    const titleZh = zhLines[0] || '';
+    const parasOther = otherLines.slice(1);
+    const parasZh = zhLines.slice(1);
+    const paragraphs = [];
+    const maxLen = Math.max(parasOther.length, parasZh.length);
+    for (let j = 0; j < maxLen; j++) {
+      paragraphs.push({
+        en: parasOther[j] || '',
+        zh: parasZh[j] || ''
+      });
+    }
+    return { title: { en: titleOther, zh: titleZh }, paragraphs };
+  }
+
+  const items = [];
+  let i = 0;
+  while (i < blocks.length) {
+    const block = blocks[i];
+    if (block.lang === 'other') {
+      if (i + 1 < blocks.length && blocks[i + 1].lang === 'zh') {
+        items.push(makeItem(block.lines, blocks[i + 1].lines));
+        i += 2;
+      } else {
+        items.push(makeItem(block.lines, []));
+        i += 1;
+      }
+    } else {
+      items.push(makeItem([], block.lines));
+      i += 1;
+    }
+  }
+
+  return items;
+}
+
+function escapeHtml(str) {
+  if (!str) return '';
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function buildHtml(items) {
+  let html = '';
+  items.forEach((item, idx) => {
+    html += '<table>';
+    html += `
+      <tr>
+        <td class="title-cell en">${escapeHtml(item.title.en)}</td>
+        <td class="title-cell zh">${escapeHtml(item.title.zh)}</td>
+      </tr>
+    `;
+    item.paragraphs.forEach(p => {
+      html += `
+        <tr>
+          <td class="en">${escapeHtml(p.en)}</td>
+          <td class="zh">${escapeHtml(p.zh)}</td>
+        </tr>
+      `;
+    });
+    html += '</table>';
+    if (idx < items.length - 1) html += '<p>&nbsp;</p>';
+  });
+  return html;
+}
+
+function preview() {
+  const text = document.getElementById('input').value;
+  const items = parseInput(text);
+  document.getElementById('preview').innerHTML = buildHtml(items);
+}
+
+function generateWord() {
+  const text = document.getElementById('input').value;
+  const items = parseInput(text);
+  const bodyHtml = buildHtml(items);
+
+  const fullHtml = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+  body { font-family: 'Times New Roman', SimSun, serif; font-size: 12pt; line-height: 1.5; }
+  table { border-collapse: collapse; width: 100%; margin-bottom: 10px; }
+  td { border: 1px solid #000; padding: 6px; vertical-align: top; }
+  .title-cell { background-color: #FFF2CC; font-weight: bold; text-align: center; }
+  .en { font-family: 'Times New Roman', SimSun, serif; font-size: 12pt; line-height: 1.5; }
+  .zh { font-family: SimSun, '宋体', serif; font-size: 12pt; line-height: 1.5; }
+</style>
+</head>
+<body>
+${bodyHtml}
+</body>
+</html>`;
+
+  const blob = new Blob([fullHtml], { type: 'application/msword' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = '双语内容.doc';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+</script>
+
+</body>
+</html>
